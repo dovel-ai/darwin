@@ -1,0 +1,233 @@
+name: Darwin
+# Darwin's reusable workflow (public). A connected repository calls it from the
+# one file Darwin's setup pull request adds (.github/workflows/darwin.yml):
+#
+#   on: { workflow_dispatch: { inputs: { darwin-run: { type: string } } } }
+#   run-name: ${{ inputs.darwin-run && format('Darwin {0}', inputs.darwin-run) || 'Darwin' }}
+#   jobs:
+#     darwin:
+#       uses: <this repository>/.github/workflows/darwin.yml@<release commit sha>
+#       permissions: { contents: read, id-token: write }
+#       with: { darwin-run: ${{ inputs.darwin-run }} }
+#
+# This repository holds only this workflow and three small scripts. Darwin's
+# engine is private: each job proves who it is with its GitHub OIDC token,
+# receives from Darwin only what it needs, and downloads the engine with it,
+# refusing any bytes whose size and SHA-256 are not the ones Darwin issued.
+#
+#   run      runs the repository's code (installs, tests, its CI): a run token and a
+#            capped model key; never a GitHub token.
+#   publish  a fresh machine that never runs repository code: also a GitHub token
+#            Darwin mints for this repository only, for the trusted publisher.
+#
+# Darwin tells the two apart from GitHub's record of each token's job, so the
+# run job cannot obtain the publish job's token. Every ${{ }} a script needs
+# reaches it through env:, never spliced into the script text.
+on:
+  workflow_call:
+    inputs:
+      darwin-run:
+        description: The Darwin run this belongs to (Darwin fills it in when it dispatches)
+        type: string
+        default: ''
+      darwin-api:
+        description: Darwin Cloud's API
+        type: string
+        default: https://api.dovellabs.si
+      runs-on:
+        description: The runner label of every job (GitHub-hosted only; Darwin refuses self-hosted runners). The engine's sandbox is validated on ubuntu-24.04.
+        type: string
+        default: ubuntu-24.04
+      job-timeout-minutes:
+        description: The run job's timeout-minutes
+        type: number
+        default: 350
+
+permissions: {}
+
+jobs:
+  run:
+    name: run
+    runs-on: ${{ inputs.runs-on }}
+    timeout-minutes: ${{ inputs.job-timeout-minutes }}
+    permissions:
+      contents: read # check out the repository and this workflow's scripts
+      id-token: write # prove this job to Darwin (its OIDC token); Darwin issues no GitHub token to it
+    outputs:
+      run-id: ${{ steps.credentials.outputs.run-id }}
+      open-pr: ${{ steps.credentials.outputs.open-pr }}
+      ci-gate: ${{ steps.credentials.outputs.ci-gate }}
+      max-candidates: ${{ steps.credentials.outputs.max-candidates }}
+    steps:
+      - name: Check out this workflow's scripts
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: darwin-workflow
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+      # Before the repository is even checked out: nothing of its code has run yet.
+      - name: Credentials from Darwin
+        id: credentials
+        env:
+          DARWIN_API: ${{ inputs.darwin-api }}
+        run: node darwin-workflow/credentials.mjs run
+      - name: Darwin's engine
+        env:
+          DARWIN_RUN_TOKEN: ${{ steps.credentials.outputs.run-token }}
+          ENGINE_URL: ${{ steps.credentials.outputs.engine-url }}
+          ENGINE_SHA256: ${{ steps.credentials.outputs.engine-sha256 }}
+          ENGINE_SIZE: ${{ steps.credentials.outputs.engine-size }}
+        run: node darwin-workflow/fetch-engine.mjs dovel-product
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: repository
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Run the Dovel flow
+        id: flow
+        uses: ./dovel-product/dovel-flow
+        env:
+          DOVEL_PRODUCT_SHA: ${{ steps.credentials.outputs.engine-commit }}
+        with:
+          openrouter-api-key: ${{ steps.credentials.outputs.model-key }}
+          # No GitHub token at all: publication is the publish job's.
+          github-token: ''
+          publication: separate-job
+          repository-path: ${{ github.workspace }}/repository
+          max-candidates: ${{ steps.credentials.outputs.max-candidates }}
+          open-pr: ${{ steps.credentials.outputs.open-pr }}
+          ci-gate: ${{ steps.credentials.outputs.ci-gate }}
+          ci-repair: 'false'
+          job-timeout-minutes: ${{ inputs.job-timeout-minutes }}
+      - name: Hand the publications over
+        if: always() && steps.credentials.outputs.open-pr == 'true'
+        env:
+          DOVEL_PUBLICATIONS: ${{ steps.flow.outputs.publications }}
+          DOVEL_OUTPUT: ${{ steps.flow.outputs.output-directory }}
+        run: |
+          set -uo pipefail
+          handoff="$RUNNER_TEMP/dovel-handoff"
+          rm -rf "$handoff"; mkdir -p "$handoff"
+          publications="${DOVEL_PUBLICATIONS:-$RUNNER_TEMP/dovel-publications}"
+          output="${DOVEL_OUTPUT:-$RUNNER_TEMP/dovel-output}"
+          if [ -d "$publications" ]; then cp -R "$publications" "$handoff/requests"; fi
+          if [ -f "$output/repository-progress.json" ]; then cp "$output/repository-progress.json" "$handoff/"; fi
+      - if: always() && steps.credentials.outputs.open-pr == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: dovel-publication-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/dovel-handoff
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Report to Darwin
+        if: always() && steps.credentials.outcome == 'success'
+        env:
+          DARWIN_API: ${{ inputs.darwin-api }}
+          DARWIN_RUN_ID: ${{ steps.credentials.outputs.run-id }}
+          DARWIN_RUN_TOKEN: ${{ steps.credentials.outputs.run-token }}
+          DOVEL_OUTPUT: ${{ steps.flow.outputs.output-directory }}
+          FLOW_OUTCOME: ${{ steps.flow.outcome }}
+        run: node darwin-workflow/report.mjs run "${DOVEL_OUTPUT:-$RUNNER_TEMP/dovel-output}" "$FLOW_OUTCOME"
+
+  publish:
+    name: publish
+    needs: run
+    # After `run` whatever its result (a failed run still sweeps the CI verdicts), never after a cancellation.
+    if: ${{ !cancelled() && needs.run.outputs.run-id != '' && needs.run.outputs.open-pr == 'true' }}
+    runs-on: ${{ inputs.runs-on }}
+    timeout-minutes: 60
+    # A fresh machine that runs no repository code. Its GitHub token comes from Darwin, for this
+    # repository only, after Darwin confirmed with GitHub that this is the publish job.
+    permissions:
+      contents: read # check out this workflow's scripts
+      id-token: write # prove this job to Darwin, which then mints its repository-scoped GitHub token
+    steps:
+      - name: Check out this workflow's scripts
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: darwin-workflow
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+      - name: Credentials from Darwin
+        id: credentials
+        env:
+          DARWIN_API: ${{ inputs.darwin-api }}
+        run: node darwin-workflow/credentials.mjs publish
+      - name: Darwin's engine
+        env:
+          DARWIN_RUN_TOKEN: ${{ steps.credentials.outputs.run-token }}
+          ENGINE_URL: ${{ steps.credentials.outputs.engine-url }}
+          ENGINE_SHA256: ${{ steps.credentials.outputs.engine-sha256 }}
+          ENGINE_SIZE: ${{ steps.credentials.outputs.engine-size }}
+        run: node darwin-workflow/fetch-engine.mjs dovel-product
+      - name: Install Darwin
+        working-directory: dovel-product
+        env:
+          COREPACK_ENABLE_DOWNLOAD_PROMPT: '0'
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3; do corepack pnpm install --frozen-lockfile && break; [ "$attempt" -lt 3 ] || exit 1; sleep $((attempt * 15)); done
+          corepack pnpm build
+      - name: Receive the publications
+        continue-on-error: true
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
+        with:
+          name: dovel-publication-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/dovel-handoff-download
+      - name: Import the publications as untrusted data
+        working-directory: dovel-product
+        env:
+          DOVEL_CI_GATE: ${{ needs.run.outputs.ci-gate }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/dovel-published"
+          node --import ./packages/part-a/node_modules/tsx/dist/loader.mjs scripts/import-publication-handoff.mjs \
+            "$RUNNER_TEMP/dovel-handoff-download" "$RUNNER_TEMP/dovel-handoff" \
+            --owner "${GITHUB_REPOSITORY%%/*}" --name "${GITHUB_REPOSITORY#*/}" --ci-gate "$DOVEL_CI_GATE" --ci-repair false \
+            --report "$RUNNER_TEMP/dovel-published/handoff-report.json"
+          rm -rf "$RUNNER_TEMP/dovel-handoff-download"
+      - name: Publish Darwin's pull requests
+        working-directory: dovel-product
+        env:
+          DOVEL_INPUT_OPENROUTER: ${{ steps.credentials.outputs.model-key }}
+          DOVEL_INPUT_GITHUB: ${{ steps.credentials.outputs.github-token }}
+          DOVEL_CI_GATE: ${{ needs.run.outputs.ci-gate }}
+          DOVEL_MAX_CANDIDATES: ${{ needs.run.outputs.max-candidates }}
+        run: |
+          set -uo pipefail
+          handoff="$RUNNER_TEMP/dovel-handoff"
+          published="$RUNNER_TEMP/dovel-published"
+          secrets="$(node -e '
+            const pairs = [["OPENROUTER_API_KEY", "DOVEL_INPUT_OPENROUTER"], ["GH_TOKEN", "DOVEL_INPUT_GITHUB"]];
+            process.stdout.write(JSON.stringify(Object.fromEntries(pairs.filter(([, from]) => process.env[from]).map(([to, from]) => [to, process.env[from]]))));
+          ')"
+          unset DOVEL_INPUT_OPENROUTER DOVEL_INPUT_GITHUB
+          export TMPDIR="$RUNNER_TEMP/dovel-tmp"
+          mkdir -p "$TMPDIR" "$handoff/requests"
+          options=(--ci-gate "$DOVEL_CI_GATE" --max-proposals "$DOVEL_MAX_CANDIDATES" --results-out "$published/publication-results.json")
+          [ ! -f "$handoff/repository-progress.json" ] || options+=(--progress "$handoff/repository-progress.json")
+          REVIEWER_RUNTIME=openrouter node --import ./packages/part-a/node_modules/tsx/dist/loader.mjs scripts/publish-dovel-proposals.mjs "$handoff/requests" \
+            --owner "${GITHUB_REPOSITORY%%/*}" --name "${GITHUB_REPOSITORY#*/}" "${options[@]}" \
+            --secrets-stdin <<<"$secrets" 2>&1 | tee "$published/publish.log"
+          code=${PIPESTATUS[0]}
+          for file in repository-progress.json PROGRESS.md; do
+            if [ -f "$handoff/$file" ]; then cp "$handoff/$file" "$published/"; fi
+          done
+          exit "$code"
+      - name: Report to Darwin
+        if: always() && steps.credentials.outcome == 'success'
+        env:
+          DARWIN_API: ${{ inputs.darwin-api }}
+          DARWIN_RUN_ID: ${{ steps.credentials.outputs.run-id }}
+          DARWIN_RUN_TOKEN: ${{ steps.credentials.outputs.run-token }}
+          PUBLISH_OUTCOME: ${{ job.status }}
+        run: node darwin-workflow/report.mjs publish "$RUNNER_TEMP/dovel-published" "$PUBLISH_OUTCOME"
