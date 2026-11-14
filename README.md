@@ -33,9 +33,11 @@ jobs:
   of it reaches your code, with file and line, in the job summary. A run
   without one still runs.
 - **Darwin remembers each repository between runs**: what each run attempted
-  and what came of it, so the next run goes on from there. The engine reads
-  and stores that memory on Darwin with the run's own token, in steps that run
-  none of your code, and only for this repository while the run is going.
+  and what came of it, including which of its pull requests people merged or
+  closed (a release you closed is not proposed again), so the next run goes on
+  from there. The engine reads and stores that memory on Darwin with the run's
+  own token, in steps that run none of your code, and only for this repository
+  while the run is going.
 - **A run Darwin starts for an API change checks the changed package first**:
   Darwin names the packages your repository's open API changes affect, and the
   run gives them its first places, within the pull requests it may open.

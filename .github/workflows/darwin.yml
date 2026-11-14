@@ -224,6 +224,21 @@ jobs:
             --owner "${GITHUB_REPOSITORY%%/*}" --name "${GITHUB_REPOSITORY#*/}" --ci-gate "$DOVEL_CI_GATE" --ci-repair false \
             --report "$RUNNER_TEMP/dovel-published/handoff-report.json"
           rm -rf "$RUNNER_TEMP/dovel-handoff-download"
+      # The repository's memory, with what happened to Darwin's pull requests since (merged, or closed with what
+      # people said), read with this repository's GitHub token: this job runs none of its code. The publisher
+      # reads it (a release people closed is not proposed again), and it is stored after publishing with this
+      # run's pull requests, so the next run, and the workspace's lessons, know which were merged.
+      - name: Load the repository's memory
+        working-directory: dovel-product
+        env:
+          GH_TOKEN: ${{ steps.credentials.outputs.github-token }}
+          DOVEL_JOB_TOKEN: ${{ steps.credentials.outputs.run-token }}
+          DARWIN_API: ${{ inputs.darwin-api }}
+        run: |
+          set -uo pipefail
+          node --import ./packages/part-a/node_modules/tsx/dist/loader.mjs scripts/repository-memory-sync.mjs pull \
+            --owner "${GITHUB_REPOSITORY%%/*}" --name "${GITHUB_REPOSITORY#*/}" --out "$RUNNER_TEMP/dovel-memory" \
+            --control-plane-url "$DARWIN_API" || echo "::warning::the repository's memory was not loaded; the publisher works without it"
       - name: Publish Darwin's pull requests
         working-directory: dovel-product
         env:
@@ -246,6 +261,8 @@ jobs:
           mkdir -p "$TMPDIR" "$handoff/requests"
           options=(--ci-gate "$DOVEL_CI_GATE" --max-proposals "$DOVEL_MAX_CANDIDATES" --results-out "$published/publication-results.json")
           [ ! -f "$handoff/repository-progress.json" ] || options+=(--progress "$handoff/repository-progress.json")
+          # A release people closed once is proposed once more, never again (the repository's memory).
+          [ ! -f "$RUNNER_TEMP/dovel-memory/memory.json" ] || options+=(--memory "$RUNNER_TEMP/dovel-memory")
           # The review runs where the key is: OpenRouter's, or (no runtime named) the engine's choice for an Anthropic key.
           [ -z "$DOVEL_REVIEWER_RUNTIME" ] || export REVIEWER_RUNTIME="$DOVEL_REVIEWER_RUNTIME"
           node --import ./packages/part-a/node_modules/tsx/dist/loader.mjs scripts/publish-dovel-proposals.mjs "$handoff/requests" \
@@ -256,6 +273,22 @@ jobs:
             if [ -f "$handoff/$file" ]; then cp "$handoff/$file" "$published/"; fi
           done
           exit "$code"
+      # The memory with this run's pull requests (their numbers and states) merged in, stored as the next revision
+      # before the report ends the run (and its token): the same run's entries, so storing after the run job's adds.
+      - name: Store the repository's memory
+        if: always() && steps.credentials.outcome == 'success'
+        working-directory: dovel-product
+        env:
+          DOVEL_JOB_TOKEN: ${{ steps.credentials.outputs.run-token }}
+          DARWIN_API: ${{ inputs.darwin-api }}
+        run: |
+          set -uo pipefail
+          [ -d "$RUNNER_TEMP/dovel-handoff" ] || exit 0
+          memory=()
+          [ ! -f "$RUNNER_TEMP/dovel-memory/memory.json" ] || memory=(--memory "$RUNNER_TEMP/dovel-memory")
+          node --import ./packages/part-a/node_modules/tsx/dist/loader.mjs scripts/repository-memory-sync.mjs push \
+            --owner "${GITHUB_REPOSITORY%%/*}" --name "${GITHUB_REPOSITORY#*/}" --run-output "$RUNNER_TEMP/dovel-handoff" \
+            ${memory[@]+"${memory[@]}"} --control-plane-url "$DARWIN_API" || echo "::warning::the repository's memory was not stored"
       - name: Report to Darwin
         if: always() && steps.credentials.outcome == 'success'
         env:
