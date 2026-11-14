@@ -94,7 +94,9 @@ jobs:
         env:
           DOVEL_PRODUCT_SHA: ${{ steps.credentials.outputs.engine-commit }}
         with:
-          openrouter-api-key: ${{ steps.credentials.outputs.model-key }}
+          openrouter-api-key: ${{ steps.credentials.outputs.model-provider == 'openrouter' && steps.credentials.outputs.model-key || '' }}
+          anthropic-api-key: ${{ steps.credentials.outputs.model-provider == 'anthropic' && steps.credentials.outputs.model-key || '' }}
+          max-model-spend-usd: ${{ steps.credentials.outputs.max-model-spend-usd }}
           # No GitHub token at all: publication is the publish job's.
           github-token: ''
           publication: separate-job
@@ -198,24 +200,28 @@ jobs:
       - name: Publish Darwin's pull requests
         working-directory: dovel-product
         env:
-          DOVEL_INPUT_OPENROUTER: ${{ steps.credentials.outputs.model-key }}
+          DOVEL_INPUT_OPENROUTER: ${{ steps.credentials.outputs.model-provider == 'openrouter' && steps.credentials.outputs.model-key || '' }}
+          DOVEL_INPUT_ANTHROPIC: ${{ steps.credentials.outputs.model-provider == 'anthropic' && steps.credentials.outputs.model-key || '' }}
           DOVEL_INPUT_GITHUB: ${{ steps.credentials.outputs.github-token }}
           DOVEL_CI_GATE: ${{ needs.run.outputs.ci-gate }}
           DOVEL_MAX_CANDIDATES: ${{ needs.run.outputs.max-candidates }}
+          DOVEL_REVIEWER_RUNTIME: ${{ steps.credentials.outputs.model-provider == 'openrouter' && 'openrouter' || '' }}
         run: |
           set -uo pipefail
           handoff="$RUNNER_TEMP/dovel-handoff"
           published="$RUNNER_TEMP/dovel-published"
           secrets="$(node -e '
-            const pairs = [["OPENROUTER_API_KEY", "DOVEL_INPUT_OPENROUTER"], ["GH_TOKEN", "DOVEL_INPUT_GITHUB"]];
+            const pairs = [["OPENROUTER_API_KEY", "DOVEL_INPUT_OPENROUTER"], ["ANTHROPIC_API_KEY", "DOVEL_INPUT_ANTHROPIC"], ["GH_TOKEN", "DOVEL_INPUT_GITHUB"]];
             process.stdout.write(JSON.stringify(Object.fromEntries(pairs.filter(([, from]) => process.env[from]).map(([to, from]) => [to, process.env[from]]))));
           ')"
-          unset DOVEL_INPUT_OPENROUTER DOVEL_INPUT_GITHUB
+          unset DOVEL_INPUT_OPENROUTER DOVEL_INPUT_ANTHROPIC DOVEL_INPUT_GITHUB
           export TMPDIR="$RUNNER_TEMP/dovel-tmp"
           mkdir -p "$TMPDIR" "$handoff/requests"
           options=(--ci-gate "$DOVEL_CI_GATE" --max-proposals "$DOVEL_MAX_CANDIDATES" --results-out "$published/publication-results.json")
           [ ! -f "$handoff/repository-progress.json" ] || options+=(--progress "$handoff/repository-progress.json")
-          REVIEWER_RUNTIME=openrouter node --import ./packages/part-a/node_modules/tsx/dist/loader.mjs scripts/publish-dovel-proposals.mjs "$handoff/requests" \
+          # The review runs where the key is: OpenRouter's, or (no runtime named) the engine's choice for an Anthropic key.
+          [ -z "$DOVEL_REVIEWER_RUNTIME" ] || export REVIEWER_RUNTIME="$DOVEL_REVIEWER_RUNTIME"
+          node --import ./packages/part-a/node_modules/tsx/dist/loader.mjs scripts/publish-dovel-proposals.mjs "$handoff/requests" \
             --owner "${GITHUB_REPOSITORY%%/*}" --name "${GITHUB_REPOSITORY#*/}" "${options[@]}" \
             --secrets-stdin <<<"$secrets" 2>&1 | tee "$published/publish.log"
           code=${PIPESTATUS[0]}

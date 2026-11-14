@@ -71,6 +71,10 @@ const outputs = {
   'run-id': credentials.run.id,
   'run-token': credentials.token,
   'model-key': credentials.model?.apiKey ?? '',
+  // Which engine input the key goes to: openrouter-api-key or anthropic-api-key.
+  'model-provider': credentials.model?.provider ?? '',
+  // The engine's own cap on this run's model spend (absent from an older Darwin: the engine's default).
+  'max-model-spend-usd': credentials.settings.maxModelSpendUsd === undefined ? '' : String(credentials.settings.maxModelSpendUsd),
   'github-token': credentials.github?.token ?? '',
   'max-candidates': String(credentials.settings.maxCandidates),
   'open-pr': String(credentials.settings.openPr),
