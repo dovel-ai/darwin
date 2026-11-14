@@ -63,10 +63,6 @@ const credentials = await attempt(async () => {
 
 if (typeof credentials.engine?.url !== 'string' || !/^[0-9a-f]{64}$/u.test(credentials.engine.sha256 ?? '')) fail('Darwin issued no engine for this run.')
 
-// Masked before anything else can print them.
-const secrets = [credentials.token, credentials.model?.apiKey, credentials.github?.token].filter(value => typeof value === 'string' && value !== '')
-for (const secret of secrets) console.log(`::add-mask::${secret}`)
-
 const outputs = {
   'run-id': credentials.run.id,
   'run-token': credentials.token,
@@ -91,9 +87,23 @@ const outputs = {
   'change-registry-url': typeof credentials.changeRegistry?.url === 'string' ? credentials.changeRegistry.url : '',
   'change-registry-sha256': /^[0-9a-f]{64}$/u.test(credentials.changeRegistry?.sha256 ?? '') ? credentials.changeRegistry.sha256 : '',
   'change-registry-size': Number.isSafeInteger(credentials.changeRegistry?.size) ? String(credentials.changeRegistry.size) : '',
+  // The packages the run looks at first (the flow's `focus`), `<ecosystem>:<name>` comma-separated: those
+  // the repository's open API changes name. Empty when none does (or from an older Darwin).
+  'focus': Array.isArray(credentials.settings.focus) ? credentials.settings.focus.filter(entry => typeof entry === 'string').join(',') : '',
 }
+// GITHUB_OUTPUT is read line by line: a value spanning lines would end early and could set other
+// outputs (and a secret spanning lines would be masked only in part, its other lines printed by the
+// mask command itself). Every value is checked before anything is masked or written, and the step
+// fails naming the output, never printing its value (it may be a secret).
 for (const [name, value] of Object.entries(outputs)) {
-  if (/[\r\n]/u.test(value)) fail(`credential ${name} is malformed`)
-  appendFileSync(process.env.GITHUB_OUTPUT, `${name}=${value}\n`)
+  if (typeof value !== 'string') fail(`Darwin's answer has no usable ${name}; the step outputs were not written.`)
+  if (/[\r\n]/u.test(value)) fail(`Darwin's ${name} spans more than one line, which a step output cannot hold; the step outputs were not written.`)
 }
+
+// Masked before anything else can print them.
+for (const secret of [outputs['run-token'], outputs['model-key'], outputs['github-token']]) {
+  if (secret !== '') console.log(`::add-mask::${secret}`)
+}
+
+appendFileSync(process.env.GITHUB_OUTPUT, Object.entries(outputs).map(([name, value]) => `${name}=${value}\n`).join(''))
 console.log(`Darwin run ${credentials.run.id} on ${credentials.run.repository}: ${purpose} credentials issued${credentials.model ? ', with a model key' : ', without a model key'}.`)

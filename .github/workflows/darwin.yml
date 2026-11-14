@@ -16,7 +16,9 @@ name: Darwin
 # refusing any bytes whose size and SHA-256 are not the ones Darwin issued.
 #
 #   run      runs the repository's code (installs, tests, its CI): a run token and a
-#            capped model key; never a GitHub token.
+#            capped model key; never a GitHub token. With the run token the engine
+#            also reads and stores the repository's memory on Darwin, in steps that
+#            run none of the repository's code.
 #   publish  a fresh machine that never runs repository code: also a GitHub token
 #            Darwin mints for this repository only, for the trusted publisher.
 #
@@ -114,6 +116,18 @@ jobs:
           publication: separate-job
           repository-path: ${{ github.workspace }}/repository
           max-candidates: ${{ steps.credentials.outputs.max-candidates }}
+          # The packages to look at first, within max-candidates: those the repository's open API changes
+          # name (empty when none does). A run Darwin starts for an API change checks the changed package.
+          focus: ${{ steps.credentials.outputs.focus }}
+          # Never a catch-up: it would validate every outdated dependency in one run, past the tested pull
+          # requests Darwin reserved for this run (max-candidates). Runs cover the rest in turn instead,
+          # each going on from the repository's memory.
+          catch-up: 'false'
+          # Darwin keeps the repository's memory between runs (what each run attempted and what came of it),
+          # read before the run attempts anything and stored after it, with this run's own token: the
+          # engine hands it only to those two steps, which run none of the repository's code.
+          control-plane-url: ${{ inputs.darwin-api }}
+          job-token: ${{ steps.credentials.outputs.run-token }}
           open-pr: ${{ steps.credentials.outputs.open-pr }}
           ci-gate: ${{ steps.credentials.outputs.ci-gate }}
           ci-repair: 'false'
