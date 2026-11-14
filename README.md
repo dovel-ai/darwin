@@ -27,6 +27,11 @@ jobs:
   confirms with GitHub which job is asking before it issues one.
 - **Darwin's engine is downloaded per run** and refused unless its size and
   SHA-256 are exactly what Darwin issued for that run.
+- **Darwin's change registry** (what API providers announced: a model retired,
+  an endpoint removed, an API version switched off) is downloaded the same way,
+  checked by size and SHA-256, before any of your code runs. The run lists what
+  of it reaches your code, with file and line, in the job summary. A run
+  without one still runs.
 - **Darwin never merges.** Every pull request is a draft until your CI passes on
   it, and a person merges it.
 

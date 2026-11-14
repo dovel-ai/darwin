@@ -86,6 +86,11 @@ const outputs = {
   'engine-size': String(credentials.engine.size),
   'engine-commit': credentials.engine.commit,
   'engine-version': credentials.engine.version,
+  // The change registry to match the code against (not secret; absent from an older Darwin, or while
+  // Darwin holds none): fetch-change-registry.mjs checks it against this size and SHA-256.
+  'change-registry-url': typeof credentials.changeRegistry?.url === 'string' ? credentials.changeRegistry.url : '',
+  'change-registry-sha256': /^[0-9a-f]{64}$/u.test(credentials.changeRegistry?.sha256 ?? '') ? credentials.changeRegistry.sha256 : '',
+  'change-registry-size': Number.isSafeInteger(credentials.changeRegistry?.size) ? String(credentials.changeRegistry.size) : '',
 }
 for (const [name, value] of Object.entries(outputs)) {
   if (/[\r\n]/u.test(value)) fail(`credential ${name} is malformed`)

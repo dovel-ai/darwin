@@ -82,6 +82,18 @@ jobs:
           ENGINE_SHA256: ${{ steps.credentials.outputs.engine-sha256 }}
           ENGINE_SIZE: ${{ steps.credentials.outputs.engine-size }}
         run: node darwin-workflow/fetch-engine.mjs dovel-product
+      # What providers announced (the engine's monitoring layer), before any repository code runs: the
+      # flow matches it against the code and lists what reaches it (change-notices.json, the job summary).
+      - name: Darwin's change registry
+        id: change-registry
+        # A run without one still runs: it matches no announcement.
+        continue-on-error: true
+        env:
+          DARWIN_RUN_TOKEN: ${{ steps.credentials.outputs.run-token }}
+          CHANGE_REGISTRY_URL: ${{ steps.credentials.outputs.change-registry-url }}
+          CHANGE_REGISTRY_SHA256: ${{ steps.credentials.outputs.change-registry-sha256 }}
+          CHANGE_REGISTRY_SIZE: ${{ steps.credentials.outputs.change-registry-size }}
+        run: node darwin-workflow/fetch-change-registry.mjs "$RUNNER_TEMP/darwin-change-registry/change-registry.json"
       - name: Check out the repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -106,6 +118,7 @@ jobs:
           ci-gate: ${{ steps.credentials.outputs.ci-gate }}
           ci-repair: 'false'
           job-timeout-minutes: ${{ inputs.job-timeout-minutes }}
+          change-registry: ${{ steps.change-registry.outputs.path }}
       - name: Hand the publications over
         if: always() && steps.credentials.outputs.open-pr == 'true'
         env:
