@@ -122,11 +122,13 @@ jobs:
           # name (empty when none does). A run Darwin starts for an API change checks the changed package.
           focus: ${{ steps.credentials.outputs.focus }}
           # A catch-up checks every outdated dependency, not only max-candidates of them, until the flow's
-          # deadline, and goes on in the next runs from the repository's memory: Darwin says 'auto' (a
-          # repository's first run, and an unfinished catch-up) or 'true' (a person asked for one).
+          # deadline, and goes on in the next runs from the repository's memory: Darwin says 'true' for the
+          # repository's backlog (its first run, and the next while that catch-up is unfinished, which Darwin
+          # starts as soon as one ends) and for one a person asked for, else 'auto'.
           catch-up: ${{ steps.credentials.outputs.catch-up }}
           # Whatever it checks, a run proposes no more new pull requests than the tested pull requests Darwin
-          # reserved for it (a grouped pull request is one); the publish job holds it to the same number.
+          # reserved for it (a grouped pull request is one); the publish job holds it to the same number. A
+          # catch-up's is the engine's per-run limit, not the repository's daily max-candidates.
           max-pull-requests: ${{ steps.credentials.outputs.max-candidates }}
           # Darwin keeps the repository's memory between runs (what each run attempted and what came of it),
           # read before the run attempts anything and stored after it, with this run's own token: the
@@ -254,6 +256,7 @@ jobs:
           DOVEL_INPUT_GITHUB: ${{ steps.credentials.outputs.github-token }}
           DOVEL_CI_GATE: ${{ needs.run.outputs.ci-gate }}
           DOVEL_MAX_CANDIDATES: ${{ needs.run.outputs.max-candidates }}
+          DOVEL_CATCH_UP: ${{ steps.credentials.outputs.catch-up }}
           DOVEL_REVIEWER_RUNTIME: ${{ steps.credentials.outputs.model-provider == 'openrouter' && 'openrouter' || '' }}
         run: |
           set -uo pipefail
@@ -267,6 +270,9 @@ jobs:
           export TMPDIR="$RUNNER_TEMP/dovel-tmp"
           mkdir -p "$TMPDIR" "$handoff/requests"
           options=(--ci-gate "$DOVEL_CI_GATE" --max-proposals "$DOVEL_MAX_CANDIDATES" --results-out "$published/publication-results.json")
+          # A catch-up (the repository's backlog, or one a person asked for) publishes past the routine's cap on open
+          # pull requests, within this run's limit (max-candidates: a catch-up's own, Darwin's settings.catchUp).
+          [ "${DOVEL_CATCH_UP:-false}" != true ] || options+=(--catch-up true)
           [ ! -f "$handoff/repository-progress.json" ] || options+=(--progress "$handoff/repository-progress.json")
           # A release people closed once is proposed once more, never again (the repository's memory).
           [ ! -f "$RUNNER_TEMP/dovel-memory/memory.json" ] || options+=(--memory "$RUNNER_TEMP/dovel-memory")
