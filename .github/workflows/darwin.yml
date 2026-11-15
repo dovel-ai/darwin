@@ -76,6 +76,8 @@ jobs:
         id: credentials
         env:
           DARWIN_API: ${{ inputs.darwin-api }}
+          # The flow's deadline is Darwin's, never past this job's own timeout.
+          DARWIN_JOB_TIMEOUT_MINUTES: ${{ inputs.job-timeout-minutes }}
         run: node darwin-workflow/credentials.mjs run
       - name: Darwin's engine
         env:
@@ -119,10 +121,13 @@ jobs:
           # The packages to look at first, within max-candidates: those the repository's open API changes
           # name (empty when none does). A run Darwin starts for an API change checks the changed package.
           focus: ${{ steps.credentials.outputs.focus }}
-          # Never a catch-up: it would validate every outdated dependency in one run, past the tested pull
-          # requests Darwin reserved for this run (max-candidates). Runs cover the rest in turn instead,
-          # each going on from the repository's memory.
-          catch-up: 'false'
+          # A catch-up checks every outdated dependency, not only max-candidates of them, until the flow's
+          # deadline, and goes on in the next runs from the repository's memory: Darwin says 'auto' (a
+          # repository's first run, and an unfinished catch-up) or 'true' (a person asked for one).
+          catch-up: ${{ steps.credentials.outputs.catch-up }}
+          # Whatever it checks, a run proposes no more new pull requests than the tested pull requests Darwin
+          # reserved for it (a grouped pull request is one); the publish job holds it to the same number.
+          max-pull-requests: ${{ steps.credentials.outputs.max-candidates }}
           # Darwin keeps the repository's memory between runs (what each run attempted and what came of it),
           # read before the run attempts anything and stored after it, with this run's own token: the
           # engine hands it only to those two steps, which run none of the repository's code.
@@ -131,7 +136,9 @@ jobs:
           open-pr: ${{ steps.credentials.outputs.open-pr }}
           ci-gate: ${{ steps.credentials.outputs.ci-gate }}
           ci-repair: 'false'
-          job-timeout-minutes: ${{ inputs.job-timeout-minutes }}
+          # The flow's deadline (Darwin's, within the job's timeout): a catch-up leaves what it does not reach
+          # by then to the next runs, so one run spends a bounded share of the repository's Actions minutes.
+          job-timeout-minutes: ${{ steps.credentials.outputs.flow-minutes }}
           change-registry: ${{ steps.change-registry.outputs.path }}
       - name: Hand the publications over
         if: always() && steps.credentials.outputs.open-pr == 'true'

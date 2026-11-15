@@ -4,7 +4,8 @@
 // before anything is installed.
 //
 //   node credentials.mjs <run|publish>
-//   env: DARWIN_API, ACTIONS_ID_TOKEN_REQUEST_URL, ACTIONS_ID_TOKEN_REQUEST_TOKEN, GITHUB_OUTPUT
+//   env: DARWIN_API, DARWIN_JOB_TIMEOUT_MINUTES (the run job's timeout), ACTIONS_ID_TOKEN_REQUEST_URL,
+//        ACTIONS_ID_TOKEN_REQUEST_TOKEN, GITHUB_OUTPUT
 
 import { appendFileSync } from 'node:fs'
 
@@ -63,6 +64,11 @@ const credentials = await attempt(async () => {
 
 if (typeof credentials.engine?.url !== 'string' || !/^[0-9a-f]{64}$/u.test(credentials.engine.sha256 ?? '')) fail('Darwin issued no engine for this run.')
 
+// The flow's deadline: Darwin's, within this job's own timeout (an older Darwin names none: the job's).
+const jobMinutes = Number(process.env.DARWIN_JOB_TIMEOUT_MINUTES)
+const darwinMinutes = credentials.settings.flowMinutes
+const flowMinutes = [jobMinutes, darwinMinutes].filter(value => Number.isSafeInteger(value) && value > 0)
+
 const outputs = {
   'run-id': credentials.run.id,
   'run-token': credentials.token,
@@ -90,6 +96,10 @@ const outputs = {
   // The packages the run looks at first (the flow's `focus`), `<ecosystem>:<name>` comma-separated: those
   // the repository's open API changes name. Empty when none does (or from an older Darwin).
   'focus': Array.isArray(credentials.settings.focus) ? credentials.settings.focus.filter(entry => typeof entry === 'string').join(',') : '',
+  // The flow's catch-up: 'true', 'auto' or 'false' (anything else, or an older Darwin: 'false').
+  'catch-up': ['true', 'auto', 'false'].includes(credentials.settings.catchUp) ? credentials.settings.catchUp : 'false',
+  // Empty when neither says: the flow then keeps its own default.
+  'flow-minutes': flowMinutes.length === 0 ? '' : String(Math.min(...flowMinutes)),
 }
 // GITHUB_OUTPUT is read line by line: a value spanning lines would end early and could set other
 // outputs (and a secret spanning lines would be masked only in part, its other lines printed by the

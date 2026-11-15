@@ -35,10 +35,12 @@ const file = join(scratch, 'engine.tar.gz')
 writeFileSync(file, archive)
 // The archive is git's own output (relative paths only); it is still listed first and anything
 // absolute or climbing out of the target refused.
-const entries = execFileSync('tar', ['-tzf', file], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 }).split('\n').filter(Boolean)
+// tar runs beside the archive and names it alone: GNU tar reads an -f name with a colon (`C:\...` on
+// Windows) as another host's file.
+const entries = execFileSync('tar', ['-tzf', 'engine.tar.gz'], { cwd: scratch, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 }).split('\n').filter(Boolean)
 if (entries.some(entry => entry.startsWith('/') || entry.split('/').includes('..'))) fail('The engine archive has an unsafe path: refusing it.')
 rmSync(target, { recursive: true, force: true })
 mkdirSync(target, { recursive: true })
-execFileSync('tar', ['-xzf', file, '-C', target, '--no-same-owner'])
+execFileSync('tar', ['-xzf', 'engine.tar.gz', '-C', target, '--no-same-owner'], { cwd: scratch })
 rmSync(scratch, { recursive: true, force: true })
 console.log(`Darwin's engine: ${(archive.length / 1048576).toFixed(1)} MB, SHA-256 verified, ${readdirSync(target).length} entries in ${target}.`)
