@@ -207,6 +207,17 @@ jobs:
           ENGINE_SHA256: ${{ steps.credentials.outputs.engine-sha256 }}
           ENGINE_SIZE: ${{ steps.credentials.outputs.engine-size }}
         run: node darwin-workflow/fetch-engine.mjs dovel-product
+      # The registry the run job matched, its own copy (the run job's ran repository code): the publisher checks a
+      # provider fix the run job proposes against it before opening it. Without one, no provider fix is opened.
+      - name: Darwin's change registry
+        id: change-registry
+        continue-on-error: true
+        env:
+          DARWIN_RUN_TOKEN: ${{ steps.credentials.outputs.run-token }}
+          CHANGE_REGISTRY_URL: ${{ steps.credentials.outputs.change-registry-url }}
+          CHANGE_REGISTRY_SHA256: ${{ steps.credentials.outputs.change-registry-sha256 }}
+          CHANGE_REGISTRY_SIZE: ${{ steps.credentials.outputs.change-registry-size }}
+        run: node darwin-workflow/fetch-change-registry.mjs "$RUNNER_TEMP/darwin-change-registry/change-registry.json"
       - name: Install Darwin
         working-directory: dovel-product
         env:
@@ -258,6 +269,7 @@ jobs:
           DOVEL_MAX_CANDIDATES: ${{ needs.run.outputs.max-candidates }}
           DOVEL_CATCH_UP: ${{ steps.credentials.outputs.catch-up }}
           DOVEL_REVIEWER_RUNTIME: ${{ steps.credentials.outputs.model-provider == 'openrouter' && 'openrouter' || '' }}
+          DOVEL_CHANGE_REGISTRY: ${{ steps.change-registry.outputs.path }}
         run: |
           set -uo pipefail
           handoff="$RUNNER_TEMP/dovel-handoff"
@@ -276,6 +288,8 @@ jobs:
           [ ! -f "$handoff/repository-progress.json" ] || options+=(--progress "$handoff/repository-progress.json")
           # A release people closed once is proposed once more, never again (the repository's memory).
           [ ! -f "$RUNNER_TEMP/dovel-memory/memory.json" ] || options+=(--memory "$RUNNER_TEMP/dovel-memory")
+          # A provider fix (a retired model, a removed endpoint) is checked against the registry the run matched.
+          [ -z "$DOVEL_CHANGE_REGISTRY" ] || options+=(--change-registry "$DOVEL_CHANGE_REGISTRY")
           # The review runs where the key is: OpenRouter's, or (no runtime named) the engine's choice for an Anthropic key.
           [ -z "$DOVEL_REVIEWER_RUNTIME" ] || export REVIEWER_RUNTIME="$DOVEL_REVIEWER_RUNTIME"
           node --import ./packages/part-a/node_modules/tsx/dist/loader.mjs scripts/publish-dovel-proposals.mjs "$handoff/requests" \

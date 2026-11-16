@@ -31,7 +31,9 @@ jobs:
   an endpoint removed, an API version switched off) is downloaded the same way,
   checked by size and SHA-256, before any of your code runs. The run lists what
   of it reaches your code, with file and line, in the job summary. A run
-  without one still runs.
+  without one still runs. Where Darwin can change your code for such an
+  announcement (a provider fix), the publish job downloads its own copy, checks
+  the fix against it, and opens it as a draft for a person to review.
 - **Darwin remembers each repository between runs**: what each run attempted
   and what came of it, including which of its pull requests people merged or
   closed (a release you closed is not proposed again), so the next run goes on
