@@ -288,12 +288,15 @@ jobs:
           exit "$code"
       # The memory with this run's pull requests (their numbers and states) merged in, stored as the next revision
       # before the report ends the run (and its token): the same run's entries, so storing after the run job's adds.
+      # The engine's commit too: the run's record in the memory keeps which engine checked it (a newer engine
+      # checks again first what an older one's review rejected).
       - name: Store the repository's memory
         if: always() && steps.credentials.outcome == 'success'
         working-directory: dovel-product
         env:
           DOVEL_JOB_TOKEN: ${{ steps.credentials.outputs.run-token }}
           DARWIN_API: ${{ inputs.darwin-api }}
+          DOVEL_PRODUCT_SHA: ${{ steps.credentials.outputs.engine-commit }}
         run: |
           set -uo pipefail
           [ -d "$RUNNER_TEMP/dovel-handoff" ] || exit 0
