@@ -16,9 +16,12 @@ name: Darwin
 # refusing any bytes whose size and SHA-256 are not the ones Darwin issued.
 #
 #   run      runs the repository's code (installs, tests, its CI): a run token and a
-#            capped model key; never a GitHub token. With the run token the engine
-#            also reads and stores the repository's memory on Darwin, in steps that
-#            run none of the repository's code.
+#            capped model key; Darwin issues it no GitHub token. Its own github.token,
+#            read-only by its permissions (contents: read), goes to act's runs of the
+#            repository's CI jobs alone, as GitHub gives it to those jobs' steps, so
+#            their setup actions are not held to GitHub's anonymous API rate. With the
+#            run token the engine also reads and stores the repository's memory on
+#            Darwin, in steps that run none of the repository's code.
 #   publish  a fresh machine that never runs repository code: also a GitHub token
 #            Darwin mints for this repository only, for the trusted publisher.
 #
@@ -52,6 +55,8 @@ jobs:
     name: run
     runs-on: ${{ inputs.runs-on }}
     timeout-minutes: ${{ inputs.job-timeout-minutes }}
+    # Read-only: this job's own github.token is given to act's runs of the repository's CI jobs (act-github-token
+    # below), so a permission that can write must never be added here.
     permissions:
       contents: read # check out the repository and this workflow's scripts
       id-token: write # prove this job to Darwin (its OIDC token); Darwin issues no GitHub token to it
@@ -113,8 +118,11 @@ jobs:
           openrouter-api-key: ${{ steps.credentials.outputs.model-provider == 'openrouter' && steps.credentials.outputs.model-key || '' }}
           anthropic-api-key: ${{ steps.credentials.outputs.model-provider == 'anthropic' && steps.credentials.outputs.model-key || '' }}
           max-model-spend-usd: ${{ steps.credentials.outputs.max-model-spend-usd }}
-          # No GitHub token at all: publication is the publish job's.
+          # No GitHub token to publish with: publication is the publish job's.
           github-token: ''
+          # This job's own read-only token, for act's runs of the repository's CI jobs alone (setup actions read GitHub's
+          # API with it, not at the anonymous rate the runner's address shares); never the flow's environment or a model's.
+          act-github-token: ${{ github.token }}
           publication: separate-job
           repository-path: ${{ github.workspace }}/repository
           max-candidates: ${{ steps.credentials.outputs.max-candidates }}
@@ -266,10 +274,11 @@ jobs:
           DOVEL_INPUT_ANTHROPIC: ${{ steps.credentials.outputs.model-provider == 'anthropic' && steps.credentials.outputs.model-key || '' }}
           DOVEL_INPUT_GITHUB: ${{ steps.credentials.outputs.github-token }}
           DOVEL_CI_GATE: ${{ needs.run.outputs.ci-gate }}
-          DOVEL_MAX_CANDIDATES: ${{ needs.run.outputs.max-candidates }}
+          DOVEL_MAX_CANDIDATES: ${{ steps.credentials.outputs.max-candidates }}
           DOVEL_CATCH_UP: ${{ steps.credentials.outputs.catch-up }}
           DOVEL_REVIEWER_RUNTIME: ${{ steps.credentials.outputs.model-provider == 'openrouter' && 'openrouter' || '' }}
           DOVEL_CHANGE_REGISTRY: ${{ steps.change-registry.outputs.path }}
+          DOVEL_PUBLISHER_LOGIN: ${{ steps.credentials.outputs.publisher-login }}
         run: |
           set -uo pipefail
           handoff="$RUNNER_TEMP/dovel-handoff"
@@ -290,6 +299,8 @@ jobs:
           [ ! -f "$RUNNER_TEMP/dovel-memory/memory.json" ] || options+=(--memory "$RUNNER_TEMP/dovel-memory")
           # A provider fix (a retired model, a removed endpoint) is checked against the registry the run matched.
           [ -z "$DOVEL_CHANGE_REGISTRY" ] || options+=(--change-registry "$DOVEL_CHANGE_REGISTRY")
+          # Who this job's token publishes as: at the cap on open pull requests, a stale draft of Darwin's gives up its slot.
+          [ -z "$DOVEL_PUBLISHER_LOGIN" ] || options+=(--publisher-login "$DOVEL_PUBLISHER_LOGIN")
           # The review runs where the key is: OpenRouter's, or (no runtime named) the engine's choice for an Anthropic key.
           [ -z "$DOVEL_REVIEWER_RUNTIME" ] || export REVIEWER_RUNTIME="$DOVEL_REVIEWER_RUNTIME"
           node --import ./packages/part-a/node_modules/tsx/dist/loader.mjs scripts/publish-dovel-proposals.mjs "$handoff/requests" \

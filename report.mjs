@@ -19,8 +19,8 @@ if (!runId || !token) {
 }
 
 const RUN_FILES = ['change-notices.json', 'CHANGE-NOTICES.md', 'repository-knowledge.json', 'dependency-changelog.json', 'repository-progress.json', 'readiness-inputs.json', 'candidate-receipts.json',
-  'scan-incomplete.json', 'registry-lookup-errors.json', 'model-provider-unavailable.json', 'KNOWLEDGE.md', 'CHANGELOG.md', 'PROGRESS.md', 'flow.log']
-const PUBLISH_FILES = ['publication-results.json', 'notice-fix-results.json', 'handoff-report.json', 'repository-progress.json', 'PROGRESS.md', 'ci-repair-results.json', 'publish.log']
+  'scan-incomplete.json', 'registry-lookup-errors.json', 'model-provider-unavailable.json', 'model-usage.json', 'KNOWLEDGE.md', 'CHANGELOG.md', 'PROGRESS.md', 'flow.log']
+const PUBLISH_FILES = ['publication-results.json', 'notice-fix-results.json', 'handoff-report.json', 'repository-progress.json', 'PROGRESS.md', 'ci-repair-results.json', 'model-usage.json', 'publish.log']
 const MAX_FILE = 10 * 1024 * 1024
 const LOG_TAIL = 5 * 1024 * 1024
 

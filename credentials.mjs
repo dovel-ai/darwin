@@ -78,6 +78,9 @@ const outputs = {
   // The engine's own cap on this run's model spend (absent from an older Darwin: the engine's default).
   'max-model-spend-usd': credentials.settings.maxModelSpendUsd === undefined ? '' : String(credentials.settings.maxModelSpendUsd),
   'github-token': credentials.github?.token ?? '',
+  // The login that token publishes as, a GitHub App's `<slug>[bot]` (not secret): at the cap on open pull requests the
+  // publisher supersedes its own stale drafts by it. Empty for the run job, from an older Darwin, or if it is no app's login.
+  'publisher-login': typeof credentials.github?.login === 'string' && /^[a-z0-9][a-z0-9-]{0,99}\[bot\]$/iu.test(credentials.github.login) ? credentials.github.login : '',
   'max-candidates': String(credentials.settings.maxCandidates),
   'open-pr': String(credentials.settings.openPr),
   'ci-gate': String(credentials.settings.ciGate),

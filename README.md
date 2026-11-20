@@ -20,8 +20,11 @@ jobs:
 - **No secret is stored in your repository.** Each job proves who it is with
   GitHub's own OIDC token, and Darwin issues it short-lived credentials for this
   run only.
-- **The job that runs your code never holds a GitHub token.** It checks out your
-  repository read-only, runs your install and tests, and reports what it found.
+- **The job that runs your code holds no token that can write.** It checks out
+  your repository read-only, runs your install and tests, and reports what it
+  found. Its own GitHub token, read-only (`contents: read`), goes only to the
+  runs of your CI jobs, as GitHub gives it to them, so their setup steps can
+  look versions up on GitHub's API.
 - **Only the publish job can open pull requests**, on a fresh machine that runs
   none of your code, with a token GitHub scopes to your repository alone. Darwin
   confirms with GitHub which job is asking before it issues one.
