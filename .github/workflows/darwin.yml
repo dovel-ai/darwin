@@ -10,11 +10,18 @@ name: Darwin
 #       permissions: { contents: read, id-token: write }
 #       with: { darwin-run: ${{ inputs.darwin-run }} }
 #
-# This repository holds only this workflow and three small scripts. Darwin's
+# This repository holds only this workflow and a few small scripts. Darwin's
 # engine is private: each job proves who it is with its GitHub OIDC token,
 # receives from Darwin only what it needs, and downloads the engine with it,
 # refusing any bytes whose size and SHA-256 are not the ones Darwin issued.
 #
+#   prepare  a fresh machine that never runs repository code, before the run job: the CI
+#            repair round's token side. Only while the repository's CI repair is on and one
+#            of Darwin's open pull requests has a failed CI verdict, Darwin mints it a GitHub
+#            token for this repository only, which reads the pull requests' CI and comments
+#            a claim on each one sent to its one repair (no push, no re-run); the engine's
+#            scan hands the run job each repair's evidence as data. Otherwise it ends in
+#            seconds. However it ends, the run goes on, without the round if it failed.
 #   run      runs the repository's code (installs, tests, its CI): a run token and a
 #            capped model key; Darwin issues it no GitHub token. Its own github.token,
 #            read-only by its permissions (contents: read), goes to act's runs of the
@@ -23,10 +30,12 @@ name: Darwin
 #            run token the engine also reads and stores the repository's memory on
 #            Darwin, in steps that run none of the repository's code.
 #   publish  a fresh machine that never runs repository code: also a GitHub token
-#            Darwin mints for this repository only, for the trusted publisher.
+#            Darwin mints for this repository only, for the trusted publisher, which
+#            also pushes each repair the run job found (an older release that passes;
+#            never application code) for CI to judge again.
 #
-# Darwin tells the two apart from GitHub's record of each token's job, so the
-# run job cannot obtain the publish job's token. Every ${{ }} a script needs
+# Darwin tells the three apart from GitHub's record of each token's job, so the
+# run job cannot obtain another job's token. Every ${{ }} a script needs
 # reaches it through env:, never spliced into the script text.
 on:
   workflow_call:
@@ -51,8 +60,108 @@ on:
 permissions: {}
 
 jobs:
+  # The CI repair round's token side (the engine's scripts/lib/ci-repair/scan.mjs), before any repository code runs:
+  # which of Darwin's open pull requests CI's verdict sends to their one repair (a failure where the base branch passes),
+  # each claimed with a comment before its evidence is handed to the run job as data. A fallback only: the second-chance
+  # code fix stays off.
+  prepare:
+    name: prepare
+    runs-on: ${{ inputs.runs-on }}
+    timeout-minutes: 20
+    # A fresh machine that runs no repository code: it never checks the repository out. Its GitHub token comes from Darwin,
+    # for this repository only, after Darwin confirmed with GitHub that this is the prepare job.
+    permissions:
+      contents: read # check out this workflow's scripts
+      id-token: write # prove this job to Darwin, which then mints its repository-scoped GitHub token
+    outputs:
+      # 'true' once the scan ran: the run job reads its requests, the publish job publishes and concludes its claims.
+      ci-repair: ${{ steps.claims.outputs.ci-repair }}
+      # 'true' only when the scan wrote a request this job then uploaded: only then does the run job read the artifact,
+      # whose name is never left free for anything else (the run job runs repository code) to upload under.
+      ci-repair-requests: ${{ steps.claims.outputs.requests }}
+      # The attempts claimed here (`<number>:<attempt>` words): the publish job concludes any the run never answers.
+      ci-repair-claims: ${{ steps.claims.outputs.claims }}
+      # The attempt this job ran in, which names its artifact: "Re-run failed jobs" reruns `run` and `publish` in a later
+      # attempt and reuses this job's, so they read its artifact by its attempt, never their own.
+      attempt: ${{ github.run_attempt }}
+    steps:
+      - name: Check out this workflow's scripts
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: darwin-workflow
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+      - name: Credentials from Darwin
+        id: credentials
+        # A run Darwin refuses this job (one started by hand on GitHub, or a Darwin outage) runs without the round.
+        continue-on-error: true
+        env:
+          DARWIN_API: ${{ inputs.darwin-api }}
+        run: node darwin-workflow/credentials.mjs prepare
+      - name: Darwin's engine
+        if: steps.credentials.outputs.ci-repair == 'true' && steps.credentials.outputs.ci-repair-candidates == 'true'
+        env:
+          DARWIN_RUN_TOKEN: ${{ steps.credentials.outputs.run-token }}
+          ENGINE_URL: ${{ steps.credentials.outputs.engine-url }}
+          ENGINE_SHA256: ${{ steps.credentials.outputs.engine-sha256 }}
+          ENGINE_SIZE: ${{ steps.credentials.outputs.engine-size }}
+        run: node darwin-workflow/fetch-engine.mjs dovel-product
+      - name: Install Darwin
+        if: steps.credentials.outputs.ci-repair == 'true' && steps.credentials.outputs.ci-repair-candidates == 'true'
+        working-directory: dovel-product
+        env:
+          COREPACK_ENABLE_DOWNLOAD_PROMPT: '0'
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3; do corepack pnpm install --frozen-lockfile && break; [ "$attempt" -lt 3 ] || exit 1; sleep $((attempt * 15)); done
+          corepack pnpm build
+      # The claims are this job's own output (never the run job's files); the requests go to the run job as an artifact.
+      # The token's own login names Darwin's claims: an app's token cannot read it from GitHub.
+      - name: Dovel CI repair requests
+        id: claims
+        if: steps.credentials.outputs.ci-repair == 'true' && steps.credentials.outputs.ci-repair-candidates == 'true'
+        working-directory: dovel-product
+        env:
+          GH_TOKEN: ${{ steps.credentials.outputs.github-token }}
+          DOVEL_PUBLISHER_LOGIN: ${{ steps.credentials.outputs.publisher-login }}
+        run: |
+          set -uo pipefail
+          requests="$RUNNER_TEMP/dovel-ci-repair-requests"
+          claims="$RUNNER_TEMP/dovel-ci-repair-claims.txt"
+          mkdir -p "$requests"
+          login=()
+          [ -z "$DOVEL_PUBLISHER_LOGIN" ] || login=(--publisher-login "$DOVEL_PUBLISHER_LOGIN")
+          node --import ./packages/part-a/node_modules/tsx/dist/loader.mjs scripts/dovel-ci-repair.mjs scan --claim --second-chance false \
+            --repo "$GITHUB_REPOSITORY" ${login[@]+"${login[@]}"} --out "$requests" --claims-out "$claims" || echo "::warning::the CI repair scan failed; no CI repair this run"
+          echo "ci-repair=true" >> "$GITHUB_OUTPUT"
+          if compgen -G "$requests/[0-9]*-ci-repair-*.json" > /dev/null; then echo "requests=true" >> "$GITHUB_OUTPUT"; fi
+          line="$(head -n 1 "$claims" 2>/dev/null || true)"
+          if [[ "$line" =~ ^[0-9]+:[A-Za-z0-9-]+(\ [0-9]+:[A-Za-z0-9-]+)*$ ]]; then echo "claims=$line" >> "$GITHUB_OUTPUT"; fi
+      - if: steps.claims.outputs.requests == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: dovel-ci-repair-requests-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/dovel-ci-repair-requests
+          if-no-files-found: error
+          retention-days: 1
+      # The token stops working with the job, not an hour later (never printed; a failure leaves it to expire).
+      - name: Revoke the GitHub token
+        if: always()
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ steps.credentials.outputs.github-token }}
+        run: node darwin-workflow/revoke-token.mjs
+
   run:
     name: run
+    needs: prepare
+    # After `prepare` whatever its result: a failed prepare job leaves the run without its CI repair round, never without
+    # the run. Never after a cancellation.
+    if: ${{ !cancelled() }}
     runs-on: ${{ inputs.runs-on }}
     timeout-minutes: ${{ inputs.job-timeout-minutes }}
     # Read-only: this job's own github.token is given to act's runs of the repository's CI jobs (act-github-token
@@ -109,6 +218,16 @@ jobs:
           path: repository
           fetch-depth: 0
           persist-credentials: false
+      # What the prepare job's scan claimed: data the flow's CI repair round reads (each failing job's evidence), never a
+      # credential. Without it (none claimed, or the download failed) the flow runs no CI repair.
+      - name: Receive the CI repair requests
+        id: ci-repair-requests
+        if: needs.prepare.outputs.ci-repair-requests == 'true'
+        continue-on-error: true
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
+        with:
+          name: dovel-ci-repair-requests-${{ github.run_id }}-${{ needs.prepare.outputs.attempt }}
+          path: ${{ runner.temp }}/dovel-ci-repair-requests
       - name: Run the Dovel flow
         id: flow
         uses: ./dovel-product/dovel-flow
@@ -123,6 +242,9 @@ jobs:
           # This job's own read-only token, for act's runs of the repository's CI jobs alone (setup actions read GitHub's
           # API with it, not at the anonymous rate the runner's address shares); never the flow's environment or a model's.
           act-github-token: ${{ github.token }}
+          # GitHub's state of each workflow, read by Darwin (this job's own token cannot read the repository's Actions):
+          # data, never a credential. A workflow GitHub has disabled is neither run with act nor a gate; empty, every one runs.
+          workflow-states: ${{ steps.credentials.outputs.workflow-states }}
           publication: separate-job
           repository-path: ${{ github.workspace }}/repository
           max-candidates: ${{ steps.credentials.outputs.max-candidates }}
@@ -145,7 +267,12 @@ jobs:
           job-token: ${{ steps.credentials.outputs.run-token }}
           open-pr: ${{ steps.credentials.outputs.open-pr }}
           ci-gate: ${{ steps.credentials.outputs.ci-gate }}
-          ci-repair: 'false'
+          # One repair of each claimed pull request, by an older release that passes the failing job (no model is asked,
+          # and nothing but dependency files changes), handed to the publish job like a pull request. The second-chance
+          # code fix stays off.
+          ci-repair: ${{ steps.ci-repair-requests.outcome == 'success' && 'true' || 'false' }}
+          ci-repair-requests: ${{ steps.ci-repair-requests.outcome == 'success' && format('{0}/dovel-ci-repair-requests', runner.temp) || '' }}
+          second-chance: 'false'
           # The flow's deadline (Darwin's, within the job's timeout): a catch-up leaves what it does not reach
           # by then to the next runs, so one run spends a bounded share of the repository's Actions minutes.
           job-timeout-minutes: ${{ steps.credentials.outputs.flow-minutes }}
@@ -182,7 +309,7 @@ jobs:
 
   publish:
     name: publish
-    needs: run
+    needs: [prepare, run]
     # After `run` whatever its result (a failed run still sweeps the CI verdicts), never after a cancellation.
     if: ${{ !cancelled() && needs.run.outputs.run-id != '' && needs.run.outputs.open-pr == 'true' }}
     runs-on: ${{ inputs.runs-on }}
@@ -244,12 +371,14 @@ jobs:
         working-directory: dovel-product
         env:
           DOVEL_CI_GATE: ${{ needs.run.outputs.ci-gate }}
+          # The round is on only where the prepare job's scan ran (its claims): a repair is never imported otherwise.
+          DOVEL_CI_REPAIR: ${{ needs.prepare.result == 'success' && needs.prepare.outputs.ci-repair == 'true' && 'true' || 'false' }}
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/dovel-published"
           node --import ./packages/part-a/node_modules/tsx/dist/loader.mjs scripts/import-publication-handoff.mjs \
             "$RUNNER_TEMP/dovel-handoff-download" "$RUNNER_TEMP/dovel-handoff" \
-            --owner "${GITHUB_REPOSITORY%%/*}" --name "${GITHUB_REPOSITORY#*/}" --ci-gate "$DOVEL_CI_GATE" --ci-repair false \
+            --owner "${GITHUB_REPOSITORY%%/*}" --name "${GITHUB_REPOSITORY#*/}" --ci-gate "$DOVEL_CI_GATE" --ci-repair "$DOVEL_CI_REPAIR" \
             --report "$RUNNER_TEMP/dovel-published/handoff-report.json"
           rm -rf "$RUNNER_TEMP/dovel-handoff-download"
       # The repository's memory, with what happened to Darwin's pull requests since (merged, or closed with what
@@ -279,6 +408,8 @@ jobs:
           DOVEL_REVIEWER_RUNTIME: ${{ steps.credentials.outputs.model-provider == 'openrouter' && 'openrouter' || '' }}
           DOVEL_CHANGE_REGISTRY: ${{ steps.change-registry.outputs.path }}
           DOVEL_PUBLISHER_LOGIN: ${{ steps.credentials.outputs.publisher-login }}
+          DOVEL_CI_REPAIR: ${{ needs.prepare.result == 'success' && needs.prepare.outputs.ci-repair == 'true' && 'true' || 'false' }}
+          DOVEL_CI_REPAIR_CLAIMS: ${{ needs.prepare.outputs.ci-repair-claims }}
         run: |
           set -uo pipefail
           handoff="$RUNNER_TEMP/dovel-handoff"
@@ -301,6 +432,11 @@ jobs:
           [ -z "$DOVEL_CHANGE_REGISTRY" ] || options+=(--change-registry "$DOVEL_CHANGE_REGISTRY")
           # Who this job's token publishes as: at the cap on open pull requests, a stale draft of Darwin's gives up its slot.
           [ -z "$DOVEL_PUBLISHER_LOGIN" ] || options+=(--publisher-login "$DOVEL_PUBLISHER_LOGIN")
+          # The CI repairs the run job found, each pushed as a new commit on Darwin's pull request after the publisher's own
+          # checks (dependency files only), and the prepare job's claims (its job output, never the run job's files): any the
+          # run never answered is concluded. The second-chance code fix is never on.
+          [ "$DOVEL_CI_REPAIR" != true ] || options+=(--ci-repair true)
+          [ "$DOVEL_CI_REPAIR" != true ] || [ -z "${DOVEL_CI_REPAIR_CLAIMS:-}" ] || options+=(--ci-repair-claims "$DOVEL_CI_REPAIR_CLAIMS")
           # The review runs where the key is: OpenRouter's, or (no runtime named) the engine's choice for an Anthropic key.
           [ -z "$DOVEL_REVIEWER_RUNTIME" ] || export REVIEWER_RUNTIME="$DOVEL_REVIEWER_RUNTIME"
           node --import ./packages/part-a/node_modules/tsx/dist/loader.mjs scripts/publish-dovel-proposals.mjs "$handoff/requests" \
@@ -310,6 +446,7 @@ jobs:
           for file in repository-progress.json PROGRESS.md; do
             if [ -f "$handoff/$file" ]; then cp "$handoff/$file" "$published/"; fi
           done
+          if [ -f "$handoff/requests/ci-repair/ci-repair-results.json" ]; then cp "$handoff/requests/ci-repair/ci-repair-results.json" "$published/"; fi
           exit "$code"
       # The memory with this run's pull requests (their numbers and states) merged in, stored as the next revision
       # before the report ends the run (and its token): the same run's entries, so storing after the run job's adds.
@@ -338,3 +475,10 @@ jobs:
           DARWIN_RUN_TOKEN: ${{ steps.credentials.outputs.run-token }}
           PUBLISH_OUTCOME: ${{ job.status }}
         run: node darwin-workflow/report.mjs publish "$RUNNER_TEMP/dovel-published" "$PUBLISH_OUTCOME"
+      # The publisher's token stops working with the job, not up to an hour later (never printed; a failure leaves it to expire).
+      - name: Revoke the GitHub token
+        if: always()
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ steps.credentials.outputs.github-token }}
+        run: node darwin-workflow/revoke-token.mjs

@@ -3,14 +3,14 @@
 // and hands them to later steps as masked step outputs. Dependency-free: it runs
 // before anything is installed.
 //
-//   node credentials.mjs <run|publish>
+//   node credentials.mjs <prepare|run|publish>
 //   env: DARWIN_API, DARWIN_JOB_TIMEOUT_MINUTES (the run job's timeout), ACTIONS_ID_TOKEN_REQUEST_URL,
 //        ACTIONS_ID_TOKEN_REQUEST_TOKEN, GITHUB_OUTPUT
 
 import { appendFileSync } from 'node:fs'
 
 const purpose = process.argv[2]
-if (purpose !== 'run' && purpose !== 'publish') fail('usage: credentials.mjs <run|publish>')
+if (!['prepare', 'run', 'publish'].includes(purpose)) fail('usage: credentials.mjs <prepare|run|publish>')
 
 const api = new URL(process.env.DARWIN_API ?? 'https://api.dovellabs.si')
 if (api.protocol !== 'https:' && !['localhost', '127.0.0.1'].includes(api.hostname)) fail(`DARWIN_API must be https: ${api}`)
@@ -69,6 +69,13 @@ const jobMinutes = Number(process.env.DARWIN_JOB_TIMEOUT_MINUTES)
 const darwinMinutes = credentials.settings.flowMinutes
 const flowMinutes = [jobMinutes, darwinMinutes].filter(value => Number.isSafeInteger(value) && value > 0)
 
+function workflowStates(value) {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return ''
+  const kept = Object.entries(value).filter(([path, state]) => path.length <= 300 && /^\.github\/workflows\/[^/\r\n]+\.ya?ml$/iu.test(path)
+    && typeof state === 'string' && /^[a-z_]{1,40}$/u.test(state))
+  return kept.length === 0 ? '' : JSON.stringify(Object.fromEntries(kept))
+}
+
 const outputs = {
   'run-id': credentials.run.id,
   'run-token': credentials.token,
@@ -79,12 +86,17 @@ const outputs = {
   'max-model-spend-usd': credentials.settings.maxModelSpendUsd === undefined ? '' : String(credentials.settings.maxModelSpendUsd),
   'github-token': credentials.github?.token ?? '',
   // The login that token publishes as, a GitHub App's `<slug>[bot]` (not secret): at the cap on open pull requests the
-  // publisher supersedes its own stale drafts by it. Empty for the run job, from an older Darwin, or if it is no app's login.
+  // publisher supersedes its own stale drafts by it, and the prepare job's CI repair scan knows its own claims by it.
+  // Empty for the run job, a job given no GitHub token, from an older Darwin, or if it is no app's login.
   'publisher-login': typeof credentials.github?.login === 'string' && /^[a-z0-9][a-z0-9-]{0,99}\[bot\]$/iu.test(credentials.github.login) ? credentials.github.login : '',
   'max-candidates': String(credentials.settings.maxCandidates),
   'open-pr': String(credentials.settings.openPr),
   'ci-gate': String(credentials.settings.ciGate),
   'ci-repair': String(credentials.settings.ciRepair),
+  // The prepare job's: whether one of Darwin's open pull requests here has a failed CI verdict, the only ones the CI
+  // repair round could repair ('true' or 'false'; anything else, another job, or an older Darwin: 'false'). Without one
+  // the job installs no engine and scans nothing.
+  'ci-repair-candidates': credentials.settings.ciRepairCandidates === true ? 'true' : 'false',
   // The engine to download (not secret): fetch-engine.mjs checks it against this size and SHA-256.
   'engine-url': credentials.engine.url,
   'engine-sha256': credentials.engine.sha256,
@@ -99,6 +111,11 @@ const outputs = {
   // The packages the run looks at first (the flow's `focus`), `<ecosystem>:<name>` comma-separated: those
   // the repository's open API changes name. Empty when none does (or from an older Darwin).
   'focus': Array.isArray(credentials.settings.focus) ? credentials.settings.focus.filter(entry => typeof entry === 'string').join(',') : '',
+  // GitHub's state of each workflow, for the flow's `workflow-states` (a workflow GitHub has disabled is neither run with
+  // act nor a gate): one line of JSON, path to state, only the entries the engine reads (a one-line path directly under
+  // .github/workflows/ ending .yml or .yaml, a plain state word). Empty when Darwin read none, for another job, or from
+  // an older Darwin: the flow then takes every workflow to run.
+  'workflow-states': workflowStates(credentials.workflowStates),
   // The flow's catch-up: 'true', 'auto' or 'false' (anything else, or an older Darwin: 'false').
   'catch-up': ['true', 'auto', 'false'].includes(credentials.settings.catchUp) ? credentials.settings.catchUp : 'false',
   // Empty when neither says: the flow then keeps its own default.
@@ -119,4 +136,5 @@ for (const secret of [outputs['run-token'], outputs['model-key'], outputs['githu
 }
 
 appendFileSync(process.env.GITHUB_OUTPUT, Object.entries(outputs).map(([name, value]) => `${name}=${value}\n`).join(''))
-console.log(`Darwin run ${credentials.run.id} on ${credentials.run.repository}: ${purpose} credentials issued${credentials.model ? ', with a model key' : ', without a model key'}.`)
+console.log(`Darwin run ${credentials.run.id} on ${credentials.run.repository}: ${purpose} credentials issued${credentials.model ? ', with a model key' : ', without a model key'}`
+  + `${purpose === 'prepare' ? (credentials.github ? ', with a GitHub token for the CI repair round' : ', without a GitHub token: no CI repair round this run') : ''}.`)

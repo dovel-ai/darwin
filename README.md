@@ -28,6 +28,17 @@ jobs:
 - **Only the publish job can open pull requests**, on a fresh machine that runs
   none of your code, with a token GitHub scopes to your repository alone. Darwin
   confirms with GitHub which job is asking before it issues one.
+- **One CI repair, if you turn it on** (the console's "One CI repair"): when
+  your CI fails one of Darwin's pull requests where the base branch passes,
+  Darwin tries once to repair it with an older release that passes, pushed as
+  a new commit for your CI to judge again, and withdrawn if your CI still
+  fails it. It never changes application code. A `prepare` job runs before the
+  job that runs your code, on a fresh machine that runs none of it: only while
+  the setting is on and one of Darwin's pull requests has failed CI, Darwin
+  gives it a token for your repository alone that reads the pull requests' CI
+  and comments a claim on each one it repairs; it cannot push, and it is
+  revoked as the job ends (as the publish job's token is). If it fails,
+  the run goes on without the repair.
 - **Darwin's engine is downloaded per run** and refused unless its size and
   SHA-256 are exactly what Darwin issued for that run.
 - **Darwin's change registry** (what API providers announced: a model retired,
