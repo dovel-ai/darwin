@@ -18,7 +18,7 @@ if (!runId || !token) {
   process.exit(0)
 }
 
-const RUN_FILES = ['change-notices.json', 'CHANGE-NOTICES.md', 'repository-knowledge.json', 'dependency-changelog.json', 'repository-progress.json', 'readiness-inputs.json', 'candidate-receipts.json',
+const RUN_FILES = ['change-notices.json', 'CHANGE-NOTICES.md', 'security-advisories.json', 'SECURITY-ADVISORIES.md', 'agent-tooling.json', 'repository-knowledge.json', 'dependency-changelog.json', 'repository-progress.json', 'readiness-inputs.json', 'candidate-receipts.json',
   'scan-incomplete.json', 'registry-lookup-errors.json', 'model-provider-unavailable.json', 'model-usage.json', 'KNOWLEDGE.md', 'CHANGELOG.md', 'PROGRESS.md', 'flow.log']
 const PUBLISH_FILES = ['publication-results.json', 'notice-fix-results.json', 'handoff-report.json', 'repository-progress.json', 'PROGRESS.md', 'ci-repair-results.json', 'model-usage.json', 'publish.log']
 const MAX_FILE = 10 * 1024 * 1024

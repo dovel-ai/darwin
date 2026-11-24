@@ -121,7 +121,7 @@ jobs:
           corepack pnpm build
       # The claims are this job's own output (never the run job's files); the requests go to the run job as an artifact.
       # The token's own login names Darwin's claims: an app's token cannot read it from GitHub.
-      - name: Dovel CI repair requests
+      - name: Darwin CI repair requests
         id: claims
         if: steps.credentials.outputs.ci-repair == 'true' && steps.credentials.outputs.ci-repair-candidates == 'true'
         working-directory: dovel-product
@@ -212,6 +212,18 @@ jobs:
           CHANGE_REGISTRY_SHA256: ${{ steps.credentials.outputs.change-registry-sha256 }}
           CHANGE_REGISTRY_SIZE: ${{ steps.credentials.outputs.change-registry-size }}
         run: node darwin-workflow/fetch-change-registry.mjs "$RUNNER_TEMP/darwin-change-registry/change-registry.json"
+      # The dependency quarantine this run was given (darwin-quarantine-v1): the repository's packages' recent releases,
+      # held until Stella has detonated them, with the verdicts it signed; the engine verifies each signature before it
+      # acts on any. A run without one proposes releases as it would without the quarantine.
+      - name: Darwin's dependency quarantine
+        id: quarantine
+        continue-on-error: true
+        env:
+          DARWIN_RUN_TOKEN: ${{ steps.credentials.outputs.run-token }}
+          QUARANTINE_URL: ${{ steps.credentials.outputs.quarantine-url }}
+          QUARANTINE_SHA256: ${{ steps.credentials.outputs.quarantine-sha256 }}
+          QUARANTINE_SIZE: ${{ steps.credentials.outputs.quarantine-size }}
+        run: node darwin-workflow/fetch-quarantine.mjs "$RUNNER_TEMP/darwin-quarantine/quarantine.json"
       - name: Check out the repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -228,7 +240,7 @@ jobs:
         with:
           name: dovel-ci-repair-requests-${{ github.run_id }}-${{ needs.prepare.outputs.attempt }}
           path: ${{ runner.temp }}/dovel-ci-repair-requests
-      - name: Run the Dovel flow
+      - name: Run the Darwin flow
         id: flow
         uses: ./dovel-product/dovel-flow
         env:
@@ -277,6 +289,7 @@ jobs:
           # by then to the next runs, so one run spends a bounded share of the repository's Actions minutes.
           job-timeout-minutes: ${{ steps.credentials.outputs.flow-minutes }}
           change-registry: ${{ steps.change-registry.outputs.path }}
+          quarantine: ${{ steps.quarantine.outputs.path }}
       - name: Hand the publications over
         if: always() && steps.credentials.outputs.open-pr == 'true'
         env:

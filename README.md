@@ -48,6 +48,13 @@ jobs:
   without one still runs. Where Darwin can change your code for such an
   announcement (a provider fix), the publish job downloads its own copy, checks
   the fix against it, and opens it as a draft for a person to review.
+- **Darwin's dependency quarantine** (your packages' recent releases, held
+  until Stella has installed and run each one sealed, with the verdicts it
+  signed) is downloaded the same way, checked by size and SHA-256. The run
+  verifies each verdict's signature before acting on it: a release Stella
+  found malicious is treated as compromised (nothing of your code runs, and a
+  rollback is proposed), and a held one is never proposed. A run without one
+  proposes releases as it would without the quarantine.
 - **Darwin remembers each repository between runs**: what each run attempted
   and what came of it, including which of its pull requests people merged or
   closed (a release you closed is not proposed again), so the next run goes on

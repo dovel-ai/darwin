@@ -108,6 +108,11 @@ const outputs = {
   'change-registry-url': typeof credentials.changeRegistry?.url === 'string' ? credentials.changeRegistry.url : '',
   'change-registry-sha256': /^[0-9a-f]{64}$/u.test(credentials.changeRegistry?.sha256 ?? '') ? credentials.changeRegistry.sha256 : '',
   'change-registry-size': Number.isSafeInteger(credentials.changeRegistry?.size) ? String(credentials.changeRegistry.size) : '',
+  // The dependency quarantine file (not secret; null while the quarantine is off, absent from an older Darwin):
+  // fetch-quarantine.mjs checks it against this size and SHA-256.
+  'quarantine-url': typeof credentials.quarantine?.url === 'string' ? credentials.quarantine.url : '',
+  'quarantine-sha256': /^[0-9a-f]{64}$/u.test(credentials.quarantine?.sha256 ?? '') ? credentials.quarantine.sha256 : '',
+  'quarantine-size': Number.isSafeInteger(credentials.quarantine?.size) ? String(credentials.quarantine.size) : '',
   // The packages the run looks at first (the flow's `focus`), `<ecosystem>:<name>` comma-separated: those
   // the repository's open API changes name. Empty when none does (or from an older Darwin).
   'focus': Array.isArray(credentials.settings.focus) ? credentials.settings.focus.filter(entry => typeof entry === 'string').join(',') : '',
