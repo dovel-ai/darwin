@@ -53,6 +53,12 @@ if (job === 'run') {
       if (/^[A-Za-z0-9._-]{1,120}\.(patch|json)$/u.test(name)) add(join(directory, 'candidate-receipts', name), `candidate-receipts/${name}`)
     }
   } catch { /* no receipts */ }
+  // What each review no receipt holds was given and answered (a provider fix's), redacted as every kept record is.
+  try {
+    for (const name of readdirSync(join(directory, 'review-rounds'))) {
+      if (/^[A-Za-z0-9._-]{1,120}\.json$/u.test(name)) add(join(directory, 'review-rounds', name), `review-rounds/${name}`)
+    }
+  } catch { /* no review rounds without a receipt */ }
 } else {
   for (const name of PUBLISH_FILES) add(join(directory, name), `published/${name}`)
 }
