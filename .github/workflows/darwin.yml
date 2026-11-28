@@ -410,11 +410,16 @@ jobs:
           GH_TOKEN: ${{ steps.credentials.outputs.github-token }}
           DOVEL_JOB_TOKEN: ${{ steps.credentials.outputs.run-token }}
           DARWIN_API: ${{ inputs.darwin-api }}
+          # The login that token publishes as: a pull request a person closed has its CI read with that App's own check
+          # runs (its "Darwin quarantine" check) left out, as the publisher's sweep reads them. Unread, none is read.
+          DOVEL_PUBLISHER_LOGIN: ${{ steps.credentials.outputs.publisher-login }}
         run: |
           set -uo pipefail
+          login=()
+          [ -z "$DOVEL_PUBLISHER_LOGIN" ] || login=(--publisher-login "$DOVEL_PUBLISHER_LOGIN")
           node --import ./packages/part-a/node_modules/tsx/dist/loader.mjs scripts/repository-memory-sync.mjs pull \
             --owner "${GITHUB_REPOSITORY%%/*}" --name "${GITHUB_REPOSITORY#*/}" --out "$RUNNER_TEMP/dovel-memory" \
-            --control-plane-url "$DARWIN_API" || echo "::warning::the repository's memory was not loaded; the publisher works without it"
+            --control-plane-url "$DARWIN_API" ${login[@]+"${login[@]}"} || echo "::warning::the repository's memory was not loaded; the publisher works without it"
       - name: Publish Darwin's pull requests
         working-directory: dovel-product
         env:

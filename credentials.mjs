@@ -51,7 +51,9 @@ const credentials = await attempt(async () => {
   const response = await fetch(new URL('/actions/token', api), {
     method: 'POST',
     headers: { authorization: `Bearer ${oidc}`, 'content-type': 'application/json', accept: 'application/json' },
-    body: JSON.stringify({ purpose }),
+    // The publish job hands the run's dependency quarantine to its publisher (darwin.yml's --quarantine): it says so, and
+    // with the quarantine on Darwin gives a publish job that does not say so no GitHub token.
+    body: JSON.stringify(purpose === 'publish' ? { purpose, publisherQuarantine: true } : { purpose }),
     signal: AbortSignal.timeout(60_000),
   })
   const body = await response.json().catch(() => ({}))
