@@ -113,6 +113,10 @@ const outputs = {
   'quarantine-url': typeof credentials.quarantine?.url === 'string' ? credentials.quarantine.url : '',
   'quarantine-sha256': /^[0-9a-f]{64}$/u.test(credentials.quarantine?.sha256 ?? '') ? credentials.quarantine.sha256 : '',
   'quarantine-size': Number.isSafeInteger(credentials.quarantine?.size) ? String(credentials.quarantine.size) : '',
+  // Issued, but Darwin has no file of it to give (it could not write it): why, in one line. The run still fails closed
+  // on it (quarantine-url is set): the fetch step says so and fetches nothing.
+  'quarantine-unavailable': typeof credentials.quarantine?.unavailable === 'string' && credentials.quarantine.unavailable.trim() !== ''
+    ? credentials.quarantine.unavailable.replace(/[\u0000-\u001f\u007f]+/gu, ' ').trim().slice(0, 300) : '',
   // The packages the run looks at first (the flow's `focus`), `<ecosystem>:<name>` comma-separated: those
   // the repository's open API changes name. Empty when none does (or from an older Darwin).
   'focus': Array.isArray(credentials.settings.focus) ? credentials.settings.focus.filter(entry => typeof entry === 'string').join(',') : '',

@@ -4,26 +4,31 @@
 // where the engine reads it (dovel-flow's `quarantine` input). The engine verifies every verdict's signature against
 // the Stella keys it pins before acting on any. Dependency-free.
 //
-// A run without a quarantine file still runs, as it would without the quarantine: nothing issued (the quarantine off),
-// or a download that fails, leaves the step's `path` output empty.
+// Nothing issued (the quarantine off), or a download that fails, leaves the step's `path` output empty and the step
+// succeeds. Where Darwin issued one, the engine's memory step asks Darwin's API for the same file itself, and a run
+// that obtains it neither way holds every new npm and PyPI release (fail closed); the publish job checks every change
+// against its own copy. Issued as unavailable (Darwin could not write the file: QUARANTINE_UNAVAILABLE says why), it
+// says so and fetches nothing: the run fails closed the same way.
 //
 //   node fetch-quarantine.mjs <file>
-//   env: DARWIN_RUN_TOKEN, QUARANTINE_URL, QUARANTINE_SHA256, QUARANTINE_SIZE, GITHUB_OUTPUT
+//   env: DARWIN_RUN_TOKEN, QUARANTINE_URL, QUARANTINE_SHA256, QUARANTINE_SIZE, QUARANTINE_UNAVAILABLE, GITHUB_OUTPUT
 
 import { createHash } from 'node:crypto'
 import { appendFileSync, mkdirSync, writeFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 
 const target = resolve(process.argv[2] ?? 'quarantine.json')
-const { DARWIN_RUN_TOKEN: token, QUARANTINE_URL: url, QUARANTINE_SHA256: expected, QUARANTINE_SIZE: size } = process.env
+const { DARWIN_RUN_TOKEN: token, QUARANTINE_URL: url, QUARANTINE_SHA256: expected, QUARANTINE_SIZE: size, QUARANTINE_UNAVAILABLE: unavailable } = process.env
 const skip = message => {
-  console.log(`::warning title=Darwin::${message} This run proposes releases as it would without the dependency quarantine.`)
+  console.log(`::warning title=Darwin::${message} The engine asks Darwin for it again, and without it proposes no new npm or PyPI release.`)
   process.exit(0)
 }
 if (!url) {
   console.log('Darwin\'s dependency quarantine: none was issued for this run.')
   process.exit(0)
 }
+// One line (credentials.mjs wrote it so; held to it again here), printed after the warning's own command.
+if (unavailable) skip(`Darwin issued this run a dependency quarantine it could not give (${unavailable.replace(/[\u0000-\u001f\u007f]+/gu, ' ').slice(0, 300)}).`)
 if (!token || !/^[0-9a-f]{64}$/u.test(expected ?? '') || !/^\d+$/u.test(size ?? '')) skip('The dependency quarantine\'s credentials are incomplete.')
 
 let file

@@ -214,7 +214,8 @@ jobs:
         run: node darwin-workflow/fetch-change-registry.mjs "$RUNNER_TEMP/darwin-change-registry/change-registry.json"
       # The dependency quarantine this run was given (darwin-quarantine-v1): the repository's packages' recent releases,
       # held until Stella has detonated them, with the verdicts it signed; the engine verifies each signature before it
-      # acts on any. A run without one proposes releases as it would without the quarantine.
+      # acts on any. The engine's memory step asks Darwin for the same file too: issued and obtained neither way, the run
+      # proposes no new npm or PyPI release. Issued none (the quarantine off), the run proposes as it would without it.
       - name: Darwin's dependency quarantine
         id: quarantine
         continue-on-error: true
@@ -223,6 +224,8 @@ jobs:
           QUARANTINE_URL: ${{ steps.credentials.outputs.quarantine-url }}
           QUARANTINE_SHA256: ${{ steps.credentials.outputs.quarantine-sha256 }}
           QUARANTINE_SIZE: ${{ steps.credentials.outputs.quarantine-size }}
+          # Issued, but with no file Darwin could give (why): the step says so, and the run fails closed as above.
+          QUARANTINE_UNAVAILABLE: ${{ steps.credentials.outputs.quarantine-unavailable }}
         run: node darwin-workflow/fetch-quarantine.mjs "$RUNNER_TEMP/darwin-quarantine/quarantine.json"
       - name: Check out the repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -290,6 +293,9 @@ jobs:
           job-timeout-minutes: ${{ steps.credentials.outputs.flow-minutes }}
           change-registry: ${{ steps.change-registry.outputs.path }}
           quarantine: ${{ steps.quarantine.outputs.path }}
+          # Darwin issued this run a quarantine file: the flow fails closed if the run obtains it neither way (the memory
+          # step failed, or kept none), as it does when the fetch fails, never as if none was issued.
+          quarantine-expected: ${{ steps.credentials.outputs.quarantine-url != '' }}
       - name: Hand the publications over
         if: always() && steps.credentials.outputs.open-pr == 'true'
         env:
@@ -423,6 +429,9 @@ jobs:
           DOVEL_PUBLISHER_LOGIN: ${{ steps.credentials.outputs.publisher-login }}
           DOVEL_CI_REPAIR: ${{ needs.prepare.result == 'success' && needs.prepare.outputs.ci-repair == 'true' && 'true' || 'false' }}
           DOVEL_CI_REPAIR_CLAIMS: ${{ needs.prepare.outputs.ci-repair-claims }}
+          # Whether Darwin issued this run a dependency quarantine file (not secret): then the publisher checks every
+          # change against it, as the memory step fetched it, and fails closed without it.
+          DOVEL_QUARANTINE_ISSUED: ${{ steps.credentials.outputs.quarantine-url }}
         run: |
           set -uo pipefail
           handoff="$RUNNER_TEMP/dovel-handoff"
@@ -452,6 +461,13 @@ jobs:
           [ "$DOVEL_CI_REPAIR" != true ] || [ -z "${DOVEL_CI_REPAIR_CLAIMS:-}" ] || options+=(--ci-repair-claims "$DOVEL_CI_REPAIR_CLAIMS")
           # The review runs where the key is: OpenRouter's, or (no runtime named) the engine's choice for an Anthropic key.
           [ -z "$DOVEL_REVIEWER_RUNTIME" ] || export REVIEWER_RUNTIME="$DOVEL_REVIEWER_RUNTIME"
+          # The run's dependency quarantine, never the run job's copy: the one the memory step above asked Darwin for with
+          # this job's own token (or its word that it could not be obtained). Issued and missing or unusable, the publisher
+          # publishes nothing that installs an npm or PyPI release (dependency-quarantine.mjs publisherQuarantine).
+          [ -z "${DOVEL_QUARANTINE_ISSUED:-}" ] || options+=(--quarantine "$RUNNER_TEMP/dovel-memory/quarantine.json" --quarantine-expected true)
+          # Darwin checks Darwin's pull requests for it too (its "Darwin quarantine" check run, or its own record where its
+          # App lacks checks: write): the sweep never readies one whose head has no such check run; Darwin's CI verdict does.
+          [ -z "${DOVEL_QUARANTINE_ISSUED:-}" ] || options+=(--quarantine-check true)
           node --import ./packages/part-a/node_modules/tsx/dist/loader.mjs scripts/publish-dovel-proposals.mjs "$handoff/requests" \
             --owner "${GITHUB_REPOSITORY%%/*}" --name "${GITHUB_REPOSITORY#*/}" "${options[@]}" \
             --secrets-stdin <<<"$secrets" 2>&1 | tee "$published/publish.log"

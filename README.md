@@ -53,8 +53,12 @@ jobs:
   signed) is downloaded the same way, checked by size and SHA-256. The run
   verifies each verdict's signature before acting on it: a release Stella
   found malicious is treated as compromised (nothing of your code runs, and a
-  rollback is proposed), and a held one is never proposed. A run without one
-  proposes releases as it would without the quarantine.
+  rollback is proposed), and a held one is never proposed. The publish job
+  checks every change against its own copy before opening it. Where Darwin
+  issued one and a job cannot obtain it (Darwin could not write it, and says
+  so in the step's warning, or the download failed), that job proposes no new
+  npm or PyPI release; where Darwin issued none (the quarantine off), releases
+  are proposed as they would be without it, and the run's report says so.
 - **Darwin remembers each repository between runs**: what each run attempted
   and what came of it, including which of its pull requests people merged or
   closed (a release you closed is not proposed again), so the next run goes on
